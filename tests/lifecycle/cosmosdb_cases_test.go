@@ -3,11 +3,14 @@
 package lifecycle
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
+	"github.com/Azure/open-service-broker-azure/pkg/service"
 	mgo "gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 )
@@ -30,12 +33,10 @@ var cosmosdbTestCases = []serviceLifecycleTestCase{
 				"allowedIPRanges": []interface{}{"0.0.0.0/0"},
 			},
 			"consistencyPolicy": map[string]interface{}{
-				"defaultConsistencyLevel": "BoundedStaleness",
-				"boundedStaleness": map[string]interface{}{
-					"maxStalenessPrefix":   float64(10),
-					"maxIntervalInSeconds": float64(500),
-				},
+				"defaultConsistencyLevel": "Session",
 			},
+			"readRegions":         []interface{}{"centralus"},
+			"autoFailoverEnabled": "enabled",
 		},
 		childTestCases: []*serviceLifecycleTestCase{
 			{ // database only scenario
@@ -55,16 +56,24 @@ var cosmosdbTestCases = []serviceLifecycleTestCase{
 		serviceID: "5f5252a0-6922-4a0c-a755-f9be70d7c79b",
 		planID:    "126a2c47-11a3-49b1-833a-21b563de6c04",
 		provisioningParameters: map[string]interface{}{
-			"location": "eastus",
+			"location": "westus",
 			"ipFilters": map[string]interface{}{
 				"allowedIPRanges": []interface{}{"0.0.0.0/0"},
 			},
 			"consistencyPolicy": map[string]interface{}{
-				"defaultConsistencyLevel": "BoundedStaleness",
-				"boundedStaleness": map[string]interface{}{
-					"maxStalenessPrefix":   float64(10),
-					"maxIntervalInSeconds": float64(500),
-				},
+				"defaultConsistencyLevel": "Session",
+			},
+			"readRegions":         []interface{}{"eastus"},
+			"autoFailoverEnabled": "enabled",
+		},
+		childTestCases: []*serviceLifecycleTestCase{
+			{ // registered scenario
+				group:                  "cosmosdb",
+				name:                   "graph-api-account-from-registered",
+				serviceID:              "ab25a081-1a28-4132-96af-f60ef8201f75",
+				planID:                 "d0f037ee-0abc-4f22-9667-4d27d773daab",
+				preProvision:           getAccountName,
+				provisioningParameters: map[string]interface{}{},
 			},
 		},
 	},
@@ -78,6 +87,13 @@ var cosmosdbTestCases = []serviceLifecycleTestCase{
 			"ipFilters": map[string]interface{}{
 				"allowedIPRanges": []interface{}{"0.0.0.0/0"},
 			},
+			"consistencyPolicy": map[string]interface{}{
+				"defaultConsistencyLevel": "Session",
+			},
+			"readRegions": []interface{}{"eastus2"},
+		},
+		updatingParameters: map[string]interface{}{
+			"readRegions": []interface{}{"centralus"},
 		},
 	},
 	{ // MongoDB
@@ -92,6 +108,13 @@ var cosmosdbTestCases = []serviceLifecycleTestCase{
 			"ipFilters": map[string]interface{}{
 				"allowedIPRanges": []interface{}{"0.0.0.0/0"},
 			},
+			"consistencyPolicy": map[string]interface{}{
+				"defaultConsistencyLevel": "Session",
+			},
+			"readRegions": []interface{}{"westus"},
+		},
+		updatingParameters: map[string]interface{}{
+			"readRegions": []interface{}{},
 		},
 	},
 	{ // SQL API All In One
@@ -103,6 +126,16 @@ var cosmosdbTestCases = []serviceLifecycleTestCase{
 			"location": "eastus",
 			"ipFilters": map[string]interface{}{
 				"allowedIPRanges": []interface{}{"0.0.0.0/0"},
+			},
+		},
+		childTestCases: []*serviceLifecycleTestCase{
+			{ // registered scenario
+				group:                  "cosmosdb",
+				name:                   "sql-api-all-in-one-from-registered",
+				serviceID:              "b8b56d60-4525-41d8-b3d8-8caa4dce0188",
+				planID:                 "555ff2f7-336b-40f5-94aa-84d71d81d0af",
+				preProvision:           getAccountNameAndDatabaseName,
+				provisioningParameters: map[string]interface{}{},
 			},
 		},
 	},
@@ -164,4 +197,56 @@ func testMongoDBCreds(credentials map[string]interface{}) error {
 	})
 
 	return err
+}
+
+func getAccountName(
+	_ context.Context,
+	resourceGroup string,
+	parent *service.Instance,
+	pp *map[string]interface{},
+) error {
+	(*pp)["resourceGroup"] = resourceGroup
+	dt, err := service.GetMapFromStruct(parent.Details)
+	if err != nil {
+		return err
+	}
+
+	fqdn := dt["fullyQualifiedDomainName"].(string)
+	hostnameNoHTTPS := strings.Join(
+		strings.Split(fqdn, "https://"),
+		"",
+	)
+	accountName := strings.Join(
+		strings.Split(hostnameNoHTTPS, ".documents.azure.com:443/"),
+		"",
+	)
+	(*pp)["accountName"] = accountName
+	return nil
+}
+
+func getAccountNameAndDatabaseName(
+	ctx context.Context,
+	resourceGroup string,
+	parent *service.Instance,
+	pp *map[string]interface{},
+) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if err := getAccountName(
+		ctx,
+		resourceGroup,
+		parent,
+		pp,
+	); err != nil {
+		return nil
+	}
+
+	dt, err := service.GetMapFromStruct(parent.Details)
+	if err != nil {
+		return err
+	}
+	databaseName := dt["databaseName"].(string)
+	(*pp)["databaseName"] = databaseName
+	return nil
 }
