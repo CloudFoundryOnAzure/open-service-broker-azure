@@ -10,6 +10,7 @@ import (
 
 func getTestCases() ([]serviceLifecycleTestCase, error) {
 	testCases := rediscacheTestCases
+	testCases = append(testCases, mssqlfgTestCases...)
 	testCases = append(testCases, postgresqlTestCases...)
 	testCases = append(testCases, cosmosdbTestCases...)
 	testCases = append(testCases, eventhubsTestCases...)
